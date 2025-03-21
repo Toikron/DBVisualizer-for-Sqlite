@@ -46,7 +46,7 @@
       left: 0;
       width: 5000px;
       height: 5000px;
-      /* Arka plan grid’i isteğe bağlı */
+
       background-image: linear-gradient(rgba(80,80,80,0.15) 1px, transparent 1px), 
                         linear-gradient(90deg, rgba(80,80,80,0.15) 1px, transparent 1px);
       background-size: 20px 20px;
@@ -253,7 +253,6 @@
       db.run("CREATE TABLE hello (msg TEXT);");
       db.run("INSERT INTO hello VALUES ('Hello world');");
       const res = db.exec("SELECT * FROM hello");
-      alert("DB says: " + res[0].values[0][0]);
     });
   </script>
   
