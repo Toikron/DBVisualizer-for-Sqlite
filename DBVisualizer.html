@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Visual SQLite Explorer (Auto-FK Connections)</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      background: #1e1e1e;
+      color: #ccc;
+    }
+    .toolbar {
+      padding: 10px;
+      background: #2b2b2b;
+      border-bottom: 1px solid #444;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .main-container {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    .canvas-container {
+      flex: 2;
+      position: relative;
+      background-color: #252526;
+      overflow: hidden;
+      cursor: grab;
+    }
+    .canvas-container:active {
+      cursor: grabbing;
+    }
+
+    #inner-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 5000px;
+      height: 5000px;
+      /* Arka plan grid’i isteğe bağlı */
+      background-image: linear-gradient(rgba(80,80,80,0.15) 1px, transparent 1px), 
+                        linear-gradient(90deg, rgba(80,80,80,0.15) 1px, transparent 1px);
+      background-size: 20px 20px;
+    }
+    .data-panel {
+      flex: 1;
+      border-left: 1px solid #444;
+      padding: 10px;
+      overflow: auto;
+      background: #1e1e1e;
+    }
+    .data-panel-header {
+      font-weight: bold;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #444;
+      margin-bottom: 10px;
+    }
+    .btn {
+      padding: 6px 12px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      background: #5a5a5a;
+      color: #fff;
+    }
+    .btn:hover {
+      background: #6b6b6b;
+    }
+    .btn-secondary {
+      background: #444;
+      color: #ddd;
+      border: 1px solid #555;
+    }
+    .btn-secondary:hover {
+      background: #555;
+    }
+    .node {
+      position: absolute;
+      width: 220px;
+      background: #2c2c2c;
+      border: 1px solid #555;
+      border-radius: 6px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+      z-index: 10;
+      overflow: hidden;
+      user-select: none;
+    }
+    .node-header {
+      background: linear-gradient(to bottom, #444, #333);
+      color: #fff;
+      padding: 6px 8px;
+      font-weight: bold;
+      font-size: 0.95em;
+      text-align: center;
+    }
+    .node-body {
+      padding: 8px;
+      background: #2c2c2c;
+    }
+    .node-columns {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    .node-column {
+      position: relative;
+      display: flex;
+      align-items: center;
+      margin: 4px 0;
+      padding-left: 20px;
+    }
+    .node-column .column-name {
+      flex: 1;
+      font-size: 0.9em;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .node-column .column-type {
+      font-size: 0.8em;
+      color: #aaa;
+      margin-left: 6px;
+    }
+    .port {
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #5c96bc;
+      cursor: pointer;
+    }
+    .port:hover {
+      background: #1e8151;
+    }
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #1e1e1e;
+      color: #ccc;
+    }
+    .data-table th,
+    .data-table td {
+      border: 1px solid #444;
+      padding: 6px 8px;
+      font-size: 0.9em;
+    }
+    .data-table th {
+      background: #333;
+    }
+    .data-table tr:nth-child(even) {
+      background: #252526;
+    }
+    .data-table tr:hover {
+      background: #333;
+    }
+    .editable:focus {
+      background: #3a3d41;
+      outline: none;
+    }
+    .data-form {
+      margin-top: 20px;
+      border-top: 1px solid #444;
+      padding-top: 10px;
+    }
+    .data-form input {
+      width: calc(100% - 10px);
+      padding: 5px;
+      margin-bottom: 5px;
+      background: #333;
+      border: 1px solid #555;
+      color: #ccc;
+    }
+    .query-container {
+      margin-top: 10px;
+      padding: 10px;
+      background: #333;
+      border-radius: 4px;
+    }
+    .query-text {
+      width: 100%;
+      min-height: 60px;
+      font-family: monospace;
+      margin-bottom: 10px;
+      padding: 8px;
+      background: #252526;
+      color: #ccc;
+      border: 1px solid #555;
+    }
+    .message {
+      padding: 10px;
+      margin: 10px 0;
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+    .message.error {
+      background: #4a1e1e;
+      color: #ffaaaa;
+      border: 1px solid #a94442;
+    }
+    .message.success {
+      background: #1e3a1e;
+      color: #aaffaa;
+      border: 1px solid #5cb85c;
+    }
+    .jtk-connector {
+      stroke-width: 2px !important;
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <input type="file" id="dbFileInput" accept=".db,.sqlite,.sqlite3"/>
+    <button id="createNewDbBtn" class="btn btn-secondary">Create New Database</button>
+    <button id="runQueryBtn" class="btn">Run Query from Connections</button>
+    <button id="clearCanvasBtn" class="btn btn-secondary">Clear Canvas</button>
+  </div>
+  <div class="main-container">
+    <!-- Canvas viewport -->
+    <div id="canvas" class="canvas-container">
+
+      <div id="inner-canvas"></div>
+    </div>
+    <div class="data-panel">
+      <div class="data-panel-header">Data View</div>
+      <div id="dataContainer"></div>
+      <div id="queryContainer" class="query-container" style="display: none;">
+        <h4>Generated SQL Query</h4>
+        <textarea id="queryText" class="query-text" readonly></textarea>
+        <button id="executeQueryBtn" class="btn">Execute Query</button>
+      </div>
+      <div id="messageContainer"></div>
+    </div>
+  </div>
+  
+
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jsPlumb/2.15.6/js/jsplumb.min.js"></script>
+  
+  <!-- SQL -->
+  <script defer>
+    document.addEventListener('DOMContentLoaded', async () => {
+      const SQL = await initSqlJs({ locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}` });
+      const db = new SQL.Database();
+      db.run("CREATE TABLE hello (msg TEXT);");
+      db.run("INSERT INTO hello VALUES ('Hello world');");
+      const res = db.exec("SELECT * FROM hello");
+      alert("DB says: " + res[0].values[0][0]);
+    });
+  </script>
+  
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      let jsPlumbInstance = jsPlumb.getInstance({
+        Connector: ["Bezier", { curviness: 50 }],
+        PaintStyle: { stroke: "#5c96bc", strokeWidth: 2 },
+        EndpointStyle: { radius: 5, fill: "#5c96bc" },
+        HoverPaintStyle: { stroke: "#1e8151" },
+        EndpointHoverStyle: { fill: "#1e8151" },
+        Container: "inner-canvas"
+      });
+      window.jsPlumbInstance = jsPlumbInstance;
+      console.log("jsPlumb instance created!", jsPlumbInstance);
+    });
+  </script>
+  
+
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      let db = null;
+      let sqlJs = null;
+      let jsPlumbInstance = window.jsPlumbInstance;
+      let tableNodes = {};
+      let connections = [];
+      let currentTable = null;
+      initApp();
+      async function initApp() {
+        try {
+          sqlJs = await initSqlJs({ locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}` });
+          jsPlumbInstance = window.jsPlumbInstance || jsPlumb.getInstance({
+            Connector: ["Bezier", { curviness: 50 }],
+            PaintStyle: { stroke: "#5c96bc", strokeWidth: 2 },
+            EndpointStyle: { radius: 5, fill: "#5c96bc" },
+            HoverPaintStyle: { stroke: "#1e8151" },
+            EndpointHoverStyle: { fill: "#1e8151" },
+            Container: "inner-canvas"
+          });
+          window.jsPlumbInstance = jsPlumbInstance;
+          document.getElementById('dbFileInput').addEventListener('change', loadDatabaseFromFile);
+          document.getElementById('createNewDbBtn').addEventListener('click', createNewDatabase);
+          document.getElementById('runQueryBtn').addEventListener('click', generateQueryFromConnections);
+          document.getElementById('clearCanvasBtn').addEventListener('click', clearCanvas);
+          showMessage("Initialized. Load or create a database to see nodes & connections.", "success");
+        } catch (error) {
+          showMessage("Initialization error: " + error.message, "error");
+        }
+      }
+      function loadDatabaseFromFile(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(ev) {
+          try {
+            const data = new Uint8Array(ev.target.result);
+            db = new sqlJs.Database(data);
+            db.run("PRAGMA foreign_keys = ON;");
+            loadDatabaseSchema();
+            showMessage(`Database '${file.name}' loaded.`, "success");
+          } catch (error) {
+            showMessage("Error loading database: " + error.message, "error");
+          }
+        };
+        reader.readAsArrayBuffer(file);
+      }
+      function createNewDatabase() {
+        try {
+          db = new sqlJs.Database();
+          db.run("PRAGMA foreign_keys = ON;");
+          db.run("CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT, phone TEXT);");
+          db.run("CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER, order_date TEXT, total_amount REAL, FOREIGN KEY (customer_id) REFERENCES customers(id));");
+          db.run("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL, description TEXT, price REAL);");
+          db.run("CREATE TABLE order_items (id INTEGER PRIMARY KEY, order_id INTEGER, product_id INTEGER, quantity INTEGER, price REAL, FOREIGN KEY (order_id) REFERENCES orders(id), FOREIGN KEY (product_id) REFERENCES products(id));");
+          db.run("INSERT INTO customers (name, email, phone) VALUES ('John Doe', 'john@example.com', '555-1234'),('Jane Smith', 'jane@example.com', '555-5678'),('Bob Johnson', 'bob@example.com', '555-9012');");
+          db.run("INSERT INTO orders (customer_id, order_date, total_amount) VALUES (1, '2023-01-15', 125.50),(2, '2023-01-16', 75.25),(1, '2023-01-20', 220.00);");
+          db.run("INSERT INTO products (name, description, price) VALUES ('Laptop', 'High-performance laptop', 999.99),('Mouse', 'Wireless mouse', 25.50),('Keyboard', 'Mechanical keyboard', 85.00),('Monitor', '4K Display', 350.00);");
+          db.run("INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (1, 2, 1, 25.50),(1, 3, 1, 85.00),(2, 2, 3, 25.50),(3, 1, 1, 999.99),(3, 4, 1, 350.00);");
+          loadDatabaseSchema();
+          showMessage("New sample DB created (with foreign keys).", "success");
+        } catch (error) {
+          showMessage("Error creating DB: " + error.message, "error");
+        }
+      }
+      function loadDatabaseSchema() {
+        if (!db) return;
+        clearCanvas();
+        try {
+          const tablesRes = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'");
+          if (!tablesRes[0] || tablesRes[0].values.length === 0) {
+            showMessage("No tables found in database.", "error");
+            return;
+          }
+          tablesRes[0].values.forEach((row, idx) => {
+            const tableName = row[0];
+            const pragma = db.exec(`PRAGMA table_info('${tableName}')`);
+            const columns = pragma[0].values.map(c => ({ name: c[1], type: c[2], pk: c[5] }));
+            createTableNode(tableName, columns, 0, 0);
+          });
+          autoConnectForeignKeys();
+          autoLayoutNodes();
+          showMessage(`Schema loaded: ${tablesRes[0].values.length} table(s).`, "success");
+        } catch (error) {
+          showMessage("Error loading schema: " + error.message, "error");
+        }
+      }
+      function autoLayoutNodes() {
+        let groups = { left: [], middle: [], right: [] };
+        for (let table in tableNodes) {
+          let outbound = 0, inbound = 0;
+          let fkRes = db.exec(`PRAGMA foreign_key_list('${table}')`);
+          if (fkRes && fkRes[0]) {
+            outbound = fkRes[0].values.length;
+          }
+          for (let other in tableNodes) {
+            if (other === table) continue;
+            let fkRes2 = db.exec(`PRAGMA foreign_key_list('${other}')`);
+            if (fkRes2 && fkRes2[0]) {
+              fkRes2[0].values.forEach(fk => { if (fk[2] === table) inbound++; });
+            }
+          }
+          if (inbound == 0) groups.left.push(table);
+          else if (outbound == 0) groups.right.push(table);
+          else groups.middle.push(table);
+        }
+        let canvasHeight = document.getElementById('canvas').clientHeight;
+        let marginY = 50;
+        let spacingLeft = (canvasHeight - 2 * marginY) / (groups.left.length + 1);
+        let spacingMiddle = (canvasHeight - 2 * marginY) / (groups.middle.length + 1);
+        let spacingRight = (canvasHeight - 2 * marginY) / (groups.right.length + 1);
+        groups.left.forEach((table, index) => {
+          tableNodes[table].element.style.left = '50px';
+          tableNodes[table].element.style.top = (marginY + (index + 1) * spacingLeft) + 'px';
+        });
+        groups.middle.forEach((table, index) => {
+          tableNodes[table].element.style.left = '350px';
+          tableNodes[table].element.style.top = (marginY + (index + 1) * spacingMiddle) + 'px';
+        });
+        groups.right.forEach((table, index) => {
+          tableNodes[table].element.style.left = '650px';
+          tableNodes[table].element.style.top = (marginY + (index + 1) * spacingRight) + 'px';
+        });
+        jsPlumbInstance.repaintEverything();
+      }
+      function autoConnectForeignKeys() {
+        const tableList = Object.keys(tableNodes);
+        tableList.forEach(tableName => {
+          const fkRes = db.exec(`PRAGMA foreign_key_list('${tableName}')`);
+          if (fkRes && fkRes[0]) {
+            fkRes[0].values.forEach(fk => {
+              const referencedTable = fk[2];
+              const referencingColumn = fk[3];
+              const referencedColumn  = fk[4];
+              const sourcePortId = `port-${tableName}-${referencingColumn}-out`;
+              const targetPortId = `port-${referencedTable}-${referencedColumn}-in`;
+              if (document.getElementById(sourcePortId) && document.getElementById(targetPortId)) {
+                jsPlumbInstance.connect({
+                  source: sourcePortId,
+                  target: targetPortId,
+                  anchors: ["Continuous", "Continuous"],
+
+                  connector: ["Bezier", { curviness: 50 }],
+                  overlays: [["Label", { label: `${tableName}.${referencingColumn} → ${referencedTable}.${referencedColumn}`, location: 0.5, cssClass: "connection-label" }]]
+                });
+              }
+            });
+          }
+        });
+      }
+      function createTableNode(tableName, columns, x, y) {
+        const node = document.createElement('div');
+        node.className = 'node';
+        node.id = `node-${tableName}`;
+        node.style.left = x + 'px';
+        node.style.top = y + 'px';
+        let innerHTML = `<div class="node-header">${tableName}</div><div class="node-body"><ul class="node-columns">`;
+        columns.forEach(col => {
+          innerHTML += `<li class="node-column" data-column="${col.name}">
+                          <div class="port" id="port-${tableName}-${col.name}-in" style="left:2px; top:50%; transform: translateY(-50%);"></div>
+                          <span class="column-name">${col.name}</span>
+                          <span class="column-type">${col.type}</span>
+                          <div class="port" id="port-${tableName}-${col.name}-out" style="right:2px; top:50%; transform: translateY(-50%); position: absolute;"></div>
+                        </li>`;
+        });
+        innerHTML += `</ul></div>`;
+        node.innerHTML = innerHTML;
+
+        document.getElementById('inner-canvas').appendChild(node);
+        tableNodes[tableName] = { element: node, columns };
+        jsPlumbInstance.draggable(node, { grid: [10, 10] });
+        node.addEventListener('click', function(e) {
+          if (!e.target.classList.contains('port')) {
+            displayTableData(tableName);
+          }
+        });
+        columns.forEach(col => {
+
+          jsPlumbInstance.addEndpoint(`port-${tableName}-${col.name}-out`, {
+            anchor: "Continuous",
+            isSource: true,
+            isTarget: false,
+            endpoint: 'Dot',
+            maxConnections: -1,
+            connector: ["Bezier", { curviness: 50 }]
+          });
+          jsPlumbInstance.addEndpoint(`port-${tableName}-${col.name}-in`, {
+            anchor: "Continuous",
+            isSource: false,
+            isTarget: true,
+            endpoint: 'Dot',
+            maxConnections: -1
+          });
+        });
+
+        jsPlumbInstance.addEndpoint(node, { anchor: 'TopCenter', isSource: true, isTarget: true, endpoint: 'Rectangle' });
+
+        jsPlumbInstance.bind("connection", function(info) {
+
+          const connectionsFromSource = jsPlumbInstance.getConnections({ source: info.source });
+          const index = connectionsFromSource.indexOf(info.connection);
+          const offset = (index - (connectionsFromSource.length - 1) / 2) * 20;
+          info.connection.setConnector(["Bezier", { curviness: 50 + offset }]);
+
+          const randomColor = '#' + Math.floor(Math.random()*16777215).toString(16);
+          info.connection.setPaintStyle({ stroke: randomColor, strokeWidth: 2 });
+
+          const sId = info.sourceId;
+          const tId = info.targetId;
+          const sMatch = sId.match(/^port-(.+?)-(.+?)-out$/);
+          const tMatch = tId.match(/^port-(.+?)-(.+?)-in$/);
+          if (sMatch && tMatch) {
+            connections.push({
+              sourceTable: sMatch[1],
+              sourceColumn: sMatch[2],
+              targetTable: tMatch[1],
+              targetColumn: tMatch[2],
+              connection: info.connection
+            });
+          }
+        });
+      }
+      function displayTableData(tableName) {
+        if (!db) return;
+        try {
+          currentTable = tableName;
+          const colRes = db.exec(`PRAGMA table_info('${tableName}')`);
+          const columns = colRes[0].values.map(c => ({ name: c[1], type: c[2], pk: c[5] }));
+          const dataRes = db.exec(`SELECT * FROM ${tableName} LIMIT 100`);
+          let html = `<h3>Table: ${tableName}</h3>
+                      <div style="overflow-x: auto;">
+                        <table class="data-table">
+                          <thead>
+                            <tr>${columns.map(col => `<th>${col.name}${col.pk ? ' (PK)' : ''}</th>`).join('')}
+                              <th>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>`;
+          if (dataRes && dataRes[0]) {
+            dataRes[0].values.forEach(row => {
+              html += "<tr>";
+              row.forEach((cell, idx) => {
+                html += `<td contenteditable="true" class="editable" data-column="${columns[idx].name}">${cell !== null ? cell : ''}</td>`;
+              });
+              html += `<td><button class="btn btn-secondary delete-row-btn">Delete</button></td>`;
+              html += "</tr>";
+            });
+          }
+          html += `</tbody></table></div>
+                   <div class="data-form">
+                     <h4>Add New Row</h4>
+                     <form id="insertForm">
+                       ${columns.map(col => `<input type="${col.type.includes('INT') ? 'number' : 'text'}" name="${col.name}" placeholder="${col.name}">`).join('')}
+                       <button type="submit" class="btn">Insert Row</button>
+                     </form>
+                   </div>`;
+          document.getElementById('dataContainer').innerHTML = html;
+          setupDataModificationListeners(tableName, columns);
+        } catch (error) {
+          showMessage("Error displaying data: " + error.message, "error");
+        }
+      }
+      function setupDataModificationListeners(tableName, columns) {
+        document.querySelectorAll('.editable').forEach(cell => {
+          cell.addEventListener('blur', function() {
+            const row = this.parentElement;
+            const pkColumn = columns.find(c => c.pk);
+            if (!pkColumn) {
+              showMessage("No primary key; cannot update row.", "error");
+              return;
+            }
+            const rowData = {};
+            row.querySelectorAll('td.editable').forEach(td => {
+              rowData[td.dataset.column] = td.textContent;
+            });
+            const pkValue = rowData[pkColumn.name];
+            const colName = this.dataset.column;
+            try {
+              db.run(`UPDATE ${tableName} SET ${colName} = ? WHERE ${pkColumn.name} = ?`, [this.textContent, pkValue]);
+              showMessage(`Row updated (${pkColumn.name}=${pkValue}).`, "success");
+            } catch (err) {
+              showMessage("Update error: " + err.message, "error");
+              displayTableData(tableName);
+            }
+          });
+        });
+        document.querySelectorAll('.delete-row-btn').forEach(btn => {
+          btn.addEventListener('click', function() {
+            const row = this.parentElement.parentElement;
+            const pkColumn = columns.find(c => c.pk);
+            if (!pkColumn) {
+              showMessage("No primary key; cannot delete row.", "error");
+              return;
+            }
+            const rowData = {};
+            row.querySelectorAll('td.editable').forEach(td => {
+              rowData[td.dataset.column] = td.textContent;
+            });
+            const pkValue = rowData[pkColumn.name];
+            try {
+              db.run(`DELETE FROM ${tableName} WHERE ${pkColumn.name} = ?`, [pkValue]);
+              row.remove();
+              showMessage(`Row deleted (${pkColumn.name}=${pkValue}).`, "success");
+            } catch (err) {
+              showMessage("Delete error: " + err.message, "error");
+            }
+          });
+        });
+        const insertForm = document.getElementById('insertForm');
+        insertForm.addEventListener('submit', function(e) {
+          e.preventDefault();
+          const cols = [], placeholders = [], vals = [];
+          columns.forEach(col => {
+            const input = insertForm.elements[col.name];
+            if (input && input.value.trim() !== '') {
+              cols.push(col.name);
+              placeholders.push('?');
+              vals.push(input.value);
+            }
+          });
+          if (cols.length === 0) {
+            showMessage("Enter at least one value to insert.", "error");
+            return;
+          }
+          try {
+            db.run(`INSERT INTO ${tableName} (${cols.join(', ')}) VALUES (${placeholders.join(', ')})`, vals);
+            displayTableData(tableName);
+            insertForm.reset();
+            showMessage("Row inserted.", "success");
+          } catch (err) {
+            showMessage("Insert error: " + err.message, "error");
+          }
+        });
+      }
+      function generateQueryFromConnections() {
+        if (connections.length === 0) {
+          showMessage("No user-drawn connections.", "error");
+          return;
+        }
+        try {
+          const involved = new Set();
+          connections.forEach(c => {
+            involved.add(c.sourceTable);
+            involved.add(c.targetTable);
+          });
+          const tArray = Array.from(involved);
+          let query = `SELECT * FROM ${tArray[0]}`;
+          const processed = new Set([tArray[0]]);
+          let toProcess = [tArray[0]];
+          function findConnectionsFor(table) {
+            return connections.filter(conn =>
+              (conn.sourceTable === table && !processed.has(conn.targetTable)) ||
+              (conn.targetTable === table && !processed.has(conn.sourceTable))
+            );
+          }
+          while (toProcess.length) {
+            const current = toProcess.shift();
+            const conns = findConnectionsFor(current);
+            conns.forEach(conn => {
+              let joinTable, onClause;
+              if (conn.sourceTable === current) {
+                joinTable = conn.targetTable;
+                onClause = `${conn.sourceTable}.${conn.sourceColumn} = ${conn.targetTable}.${conn.targetColumn}`;
+              } else {
+                joinTable = conn.sourceTable;
+                onClause = `${conn.targetTable}.${conn.targetColumn} = ${conn.sourceTable}.${conn.sourceColumn}`;
+              }
+              if (!processed.has(joinTable)) {
+                query += ` JOIN ${joinTable} ON ${onClause}`;
+                processed.add(joinTable);
+                toProcess.push(joinTable);
+              }
+            });
+          }
+          document.getElementById('queryText').value = query;
+          document.getElementById('queryContainer').style.display = 'block';
+          document.getElementById('executeQueryBtn').onclick = () => executeQuery(query);
+          showMessage("Query generated from manual connections.", "success");
+        } catch (error) {
+          showMessage("Query generation error: " + error.message, "error");
+        }
+      }
+      function executeQuery(query) {
+        if (!db) return;
+        try {
+          const res = db.exec(query);
+          if (!res || res.length === 0) {
+            showMessage("Query executed, no results returned.", "success");
+            document.getElementById('dataContainer').innerHTML = `<h3>Query Results</h3><p>No data returned.</p>`;
+            return;
+          }
+          const cols = res[0].columns;
+          const rows = res[0].values;
+          let html = `<h3>Query Results</h3>
+                      <div style="overflow-x: auto;">
+                        <table class="data-table">
+                          <thead>
+                            <tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>
+                          </thead>
+                          <tbody>`;
+          rows.forEach(r => {
+            html += '<tr>';
+            r.forEach(cell => {
+              html += `<td>${cell !== null ? cell : ''}</td>`;
+            });
+            html += '</tr>';
+          });
+          html += `</tbody></table></div>`;
+          document.getElementById('dataContainer').innerHTML = html;
+          showMessage(`Query returned ${rows.length} row(s).`, "success");
+        } catch (error) {
+          showMessage("Query execution error: " + error.message, "error");
+        }
+      }
+      function clearCanvas() {
+        document.getElementById('inner-canvas').innerHTML = '';
+        connections = [];
+        tableNodes = {};
+        if (jsPlumbInstance) jsPlumbInstance.reset();
+        document.getElementById('dataContainer').innerHTML = '';
+        document.getElementById('queryContainer').style.display = 'none';
+      }
+      function showMessage(msg, type) {
+        const container = document.getElementById('messageContainer');
+        const div = document.createElement('div');
+        div.className = `message ${type}`;
+        div.textContent = msg;
+        container.appendChild(div);
+        setTimeout(() => {
+          div.remove();
+        }, 5000);
+      }
+    });
+  </script>
+  
+  <!-- Panning & Zoom  -->
+  <script>
+    (function() {
+      const innerCanvas = document.getElementById('inner-canvas');
+      let scale = 1;
+      let panX = 0;
+      let panY = 0;
+      let isPanning = false;
+      let startX, startY;
+  
+      function updateTransform() {
+        innerCanvas.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+      }
+  
+      function zoomAtPoint(zoomFactor, mouseX, mouseY) {
+        const offsetXBefore = (mouseX - panX) / scale;
+        const offsetYBefore = (mouseY - panY) / scale;
+        scale *= zoomFactor;
+
+        scale = Math.min(Math.max(scale, 0.1), 3);
+        panX = mouseX - offsetXBefore * scale;
+        panY = mouseY - offsetYBefore * scale;
+        updateTransform();
+        window.jsPlumbInstance && window.jsPlumbInstance.repaintEverything();
+      }
+  
+
+      document.getElementById('canvas').addEventListener('wheel', function(e) {
+        e.preventDefault();
+        const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
+        zoomAtPoint(zoomFactor, e.clientX, e.clientY);
+      });
+
+      document.getElementById('canvas').addEventListener('mousedown', function(e) {
+        if (e.button === 0 && !e.target.closest('.node')) {
+          isPanning = true;
+          startX = e.clientX - panX;
+          startY = e.clientY - panY;
+        }
+      });
+  
+      document.addEventListener('mousemove', function(e) {
+        if (!isPanning) return;
+        panX = e.clientX - startX;
+        panY = e.clientY - startY;
+        updateTransform();
+        window.jsPlumbInstance && window.jsPlumbInstance.repaintEverything();
+      });
+  
+      document.addEventListener('mouseup', function(e) {
+        isPanning = false;
+      });
+    })();
+  </script>
+</body>
+</html>
